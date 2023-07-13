@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+
+<body>
+
+  <div>
+    <div>对端 desc 的 json:</div>
+    <textarea id="desc_textarea" rows="10" cols="50"></textarea>
+    <div><button id="set_desc_btn">设置 desc</button></div>
+  </div>
+
+  <div>
+    <div>发送内容:</div>
+    <textarea id="send_textarea" rows="10" cols="50"></textarea>
+    <div><button id="send_btn">发送</button></div>
+  </div>
+
+  <script>
+    function log(...args) {
+      const div = window.document.createElement('div')
+      let text = '';
+      for (const arg of args) {
+        if (typeof arg === 'string') text += arg
+        if (typeof arg === 'object') text += JSON.stringify(arg)
+      }
+      div.innerText = text;
+      window.document.body.appendChild(div)
+      console.log(...args)
+    }
+
+    function addIceCandidate(pc, event) {
+      pc.addIceCandidate(event.candidate)
+        .then(
+          () => log('AddIceCandidate success.'),
+          () => log('Failed to add Ice Candidate:' + error.toString())
+        );
+      log('ICE candidate: ' + event.candidate ? event.candidate.candidate : '(null)');
+    }
+    function getDesc(pc, type) {
+      if (type === 'offer') {
+        localConnection.createOffer().then(
+          (localDesc) => {
+            log('Offer from localConnection: ', localDesc);
+            window.localDesc = localDesc;
+          },
+          (error) => { log('Failed to create session description: ' + error.toString()) }
+        );
+      }
+      else if (type === 'answer') {
+        remoteConnection.createAnswer().then(
+          (remoteDesc) => {
+            log('Answer from remoteConnection: ', remoteDesc);
+            window.remoteDesc = remoteDesc;
+          },
+          (error) => { log('Failed to create session description: ' + error.toString()) }
+        );
+      }
+    }
+    function setDesc(pc, localDesc, remoteDesc) {
+      pc.setLocalDescription(localDesc);
+      pc.setRemoteDescription(remoteDesc);
+    }
+
+
+    // ?type=local  或  ?type=remote
+    const query = Object.fromEntries(location.search.replace('?', '').split('&').map(str => str.split('=')))
+    const __div = window.document.createElement('div')
+    __div.style.textAlign = 'center'
+    __div.style.fontWeight = 'bold'
+    __div.innerText = '当前类型: ' + query.type;
+    window.document.body.appendChild(__div)
+
+    log(query)
+
+    // 发送端逻辑
+    if (query.type === 'local') {
+      // 创建 [WebRTC] 实例
+      const localConnection = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ]
+      });
+      window.localConnection = localConnection;
+      log('Created local peer connection object localConnection');
+      // 创建[发送通道]
+      const sendChannel = localConnection.createDataChannel('stun-channel');
+      window.sendChannel = sendChannel;
+      log('Created send data channel');
+      // 得到 [ICE candidate]
+      localConnection.onicecandidate = e => {
+        log('-------------------')
+        log('onicecandidate(将数据中的 candidate 提供给对端): ', e);
+        log('ip: ', e?.candidate?.address);
+        log('localDescription: ', localConnection.localDescription)
+        log('-------------------')
+        window.icecandidate = e;
+        // TODO: addIceCandidate
+      };
+      // [发送通道]的事件
+      sendChannel.onopen = onSendChannelStateChange;
+      sendChannel.onclose = onSendChannelStateChange;
+      function onSendChannelStateChange() {
+        const readyState = sendChannel.readyState;
+        log('Send channel state is: ' + readyState);
+        if (readyState === 'open') {
+          //
+        } else {
+          //
+        }
+      }
+      /**
+       * 1. 创建 [offer] 拿到 [desc] 内容，调用 setLocalDescription
+       * 2. 将 [desc] 提供给对端，调用 setRemoteDescription
+       * 3. 对端创建 [answer] 之后同样执行上两步的"交换 desc"
+       */
+      localConnection.createOffer().then(
+        (localDesc) => {
+          log('Offer from localConnection: ', localDesc);
+          window.localDesc = localDesc;
+
+          localConnection.setLocalDescription(window.localDesc);
+        },
+        (error) => { log('Failed to create session description: ' + error.toString()) }
+      );
+
+      const sendBtnEl = window.document.getElementById('send_btn')
+      sendBtnEl.onclick = function () {
+        const inputEl = window.document.getElementById('send_textarea');
+        const data = inputEl.value;
+        console.log('handleSend', inputEl)
+        sendChannel.send(data);
+        log('Sent Data: ' + data);
+      }
+    }
+
+    // 接收端逻辑
+    else if (query.type === 'remote') {
+      // 创建 [WebRTC] 实例
+      const remoteConnection = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ]
+      });
+      window.remoteConnection = remoteConnection;
+      log('Created remote peer connection object remoteConnection');
+      // 得到 [ICE candidate]
+      remoteConnection.onicecandidate = e => {
+        log('onicecandidate(将数据中的 candidate 提供给对端): ', e);
+        log('ip: ', e?.candidate?.address);
+        log('localDescription: ', localConnection.localDescription)
+        log('-------------------')
+        window.icecandidate = e;
+        // TODO: addIceCandidate
+      };
+      // (从通道中)接收到数据
+      remoteConnection.ondatachannel = (event) => {
+        log('Receive Channel Callback');
+        const receiveChannel = event.channel;
+        receiveChannel.onmessage = onReceiveMessageCallback;
+        receiveChannel.onopen = onReceiveChannelStateChange;
+        receiveChannel.onclose = onReceiveChannelStateChange;
+      }
+      function onReceiveMessageCallback(event) {
+        log('Received Message: ', event?.data);
+      }
+      function onReceiveChannelStateChange() {
+        const readyState = receiveChannel.readyState;
+        log('Receive channel state is: ' + readyState);
+      }
+      //
+      // getDesc(remoteConnection, 'answer');
+
+      const inputEl = window.document.getElementById('send_textarea')
+      inputEl.disabled = true
+      const sendBtnEl = window.document.getElementById('send_btn')
+      sendBtnEl.disabled = true
+    }
+
+
+    // 设置 desc
+    const setDescBtnEl = window.document.getElementById('set_desc_btn')
+    setDescBtnEl.onclick = function () {
+      const descInputEl = window.document.getElementById('desc_textarea')
+      const descJson = descInputEl.value
+      console.log(descJson)
+      try {
+        const _desc = JSON.parse(descJson);
+        console.log(_desc)
+
+        //
+        if (query.type === 'local') {
+          localConnection.setRemoteDescription(_desc);
+        }
+
+        //
+        else if (query.type === 'remote') {
+          remoteConnection.setRemoteDescription(_desc);
+          remoteConnection.createAnswer().then(
+            (remoteDesc) => {
+              log('Answer from remoteConnection: ', remoteDesc);
+              window.remoteDesc = remoteDesc;
+
+              remoteConnection.setLocalDescription(remoteDesc);
+            },
+            (error) => { log('Failed to create session description: ' + error.toString()) }
+          );
+        }
+
+        return;
+      } catch (_) { }
+      window.alert('输入有误，不是有效 json')
+    }
+
+  </script>
+
+</body>
+
+</html>

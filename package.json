@@ -1,0 +1,27 @@
+{
+  "name": "p2p_demo",
+  "version": "1.0.0",
+  "description": "webrtc 或 P2P 相关 测试",
+  "main": "index.js",
+  "scripts": {
+    "install:front": "cd front && npm install",
+    "install:server": "cd server && npm install",
+    "postinstall": "npm run install:front && npm run install:server",
+    "dev:front": "cd front && npm run dev",
+    "dev:server": "cd server && npm run dev",
+    "build:front": "cd front && npm run build",
+    "build:server": "cd server && npm run build",
+    "build": "npm run build:front && npm run build:server"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hozeeee/p2p_demo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hozeeee/p2p_demo/issues"
+  },
+  "homepage": "https://github.com/hozeeee/p2p_demo#readme"
+}
