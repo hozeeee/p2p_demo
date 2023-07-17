@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Socket } from 'socket.io-client';
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, reactive } from 'vue';
 import { io } from 'socket.io-client';
 import { ElMessage } from 'element-plus';
 
@@ -111,6 +111,7 @@ function intoRoom() {
 // 初始化 RTCPeerConnection
 const connectionRef = ref<RTCPeerConnection>();
 const channelRef = ref<RTCDataChannel>();
+const candidateList = reactive<(RTCIceCandidate | null)[]>([]);
 function initPeerConnection() {
   // 创建 [WebRTC] 实例
   const connection = new RTCPeerConnection({
@@ -131,7 +132,8 @@ function initPeerConnection() {
     if (!socket.value) return ElMessage.error('socket 未初始化');
     const { candidate } = evt;
     // 对端监听 add_ice_candidate
-    socket.value.emit('send_ice_candidate', candidate);
+    // socket.value.emit('send_ice_candidate', candidate);
+    candidateList.push(candidate);
     // TODO: log   once
   };
   console.log('connection: ', connectionRef.value)
@@ -209,7 +211,11 @@ function createAnswer() {
 function sendDesc() {
   if (!socket.value) return ElMessage.error('socket 未初始化');
   if (!localDescription.value) return ElMessage.error('缺少 localDescription');
+  // 对端必须先设置了 description 才能正常设置 candidate
   socket.value.emit('send_desc', localDescription.value);
+  for (const candidate of candidateList) {
+    socket.value.emit('send_ice_candidate', candidate);
+  }
 }
 
 function sendChannel() {
