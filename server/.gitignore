@@ -13,3 +13,5 @@ run/
 *.un~
 .tsbuildinfo
 .tsbuildinfo.*
+
+publish/*
