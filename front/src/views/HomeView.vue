@@ -29,43 +29,44 @@ import { ElMessage } from 'element-plus';
 
 /**
  * 完整流程：
- * 1. 双方 与服务器建立 socket 连接
- * 2. 双方 输入相同的"房间号"，准备交换信息，先进入房间的创建 Offer(A端)，后进入房间的创建 Answer(B端)
- * 3. 双方 都创建 RTCPeerConnection 实例，通过 onicecandidate 拿到 candidate(会有多个)，此过程可以提前创建
- * 4. A端 createDataChannel 创建数据通道，后续用来发送数据
- * 5. A端 创建 Offer ，会生成 Description ，自己 setLocalDescription ，通过 socket 发送给对端 setRemoteDescription
- * 6. B端 收到 A端 的 Description 后，使用 setRemoteDescription 设置
- * 7. A端 的 onicecandidate 会产出数据，拿到所有的 candidate 后，再通过 socket 依次发给 B端
- * 8. B端 依次收到 candidate 后，使用 addIceCandidate 设置
- * 9. B端 现在可以创建 Answer ，同样会生成 Description 和 candidate ，执行类似上面的步骤，发给 A端 设置
- * 10. A端 设置完后，双方应该会触发 channel 的 onopen 事件
- * 11. 发送数据
+ *    1. 双方 与服务器建立 socket 连接
+ *    2. 双方 输入相同的"房间号"，准备交换信息，先进入房间的创建 Offer(A端)，后进入房间的创建 Answer(B端)
+ *    3. 双方 都创建 RTCPeerConnection 实例，通过 onicecandidate 拿到 candidate(会有多个)，此过程可以提前创建
+ *    4. A端 createDataChannel 创建数据通道，后续用来发送数据
+ *    5. A端 创建 Offer ，会生成 Description ，自己 setLocalDescription ，通过 socket 发送给对端 setRemoteDescription
+ *    6. B端 收到 A端 的 Description 后，使用 setRemoteDescription 设置
+ *    7. A端 的 onicecandidate 会产出数据，拿到所有的 candidate 后，再通过 socket 依次发给 B端
+ *    8. B端 依次收到 candidate 后，使用 addIceCandidate 设置
+ *    9. B端 现在可以创建 Answer ，同样会生成 Description 和 candidate ，执行类似上面的步骤，发给 A端 设置
+ *    10. A端 设置完后，双方应该会触发 channel 的 onopen 事件
+ *    11. 发送数据
  * 
  * // TODO: 关闭 socket 
  * // TODO: 重连 (网络变更)
+ * 
+ * 注意事项：
+ *    1. addIceCandidate 之前必须先 setRemoteDescription
+ *    2. Answer端 创建之前，必须先 setRemoteDescription
+ * 
  */
 
 const socket = ref<Socket | null>(null);
 const socketConnected = ref(false);
 const roomId = ref('');
 const inRoom = ref(false);
-const channelData = ref('');
+const channelSendData = ref('');
 // 初始化 RTCPeerConnection
 const connectionRef = ref<RTCPeerConnection>();
 const channelRef = ref<RTCDataChannel>();
-const candidateList = reactive<(RTCIceCandidate | null)[]>([]); // TODO:成功建立p2p后清空
-const candidateEnd = ref(false);
-const candidateTimer = ref<number>();
+const channelOpened = ref(false);
+// const candidateList = reactive<(RTCIceCandidate | null)[]>([]); // TODO:成功建立p2p后清空
+// const candidateEnd = ref(false);
+// const candidateTimer = ref<number>();
 // 角色
 const role = ref<'offer' | 'answer' | ''>('');
 //
-const offerCreated = ref(false);
-const answerCreated = ref(false);
-const localDescription = ref<RTCSessionDescriptionInit>();
+// const localDescription = ref<RTCSessionDescriptionInit>();
 
-
-
-console.log('location.host: ', location.host)
 
 // 创建 socket
 function initSocket() {
@@ -86,32 +87,36 @@ function initSocket() {
 
   // 分配角色 (双方进入房间后)
   socket.value.on('set_role', (_role: 'offer' | 'answer') => {
-    console.log('作为角色: ', _role)
+    ElMessage.info(`作为角色: ${_role}`); // TODO:del
     if (!_role || !['offer', 'answer'].includes(_role)) return ElMessage.error(`角色分配异常: ${_role}`);
     role.value = _role;
   });
   // 交换 ice_candidate
   socket.value.on('add_ice_candidate', (candidate: RTCIceCandidate | null) => {
-    console.log('接收到对端的 candidate: ', JSON.stringify(candidate))
     if (!candidate) return;
     if (!connectionRef.value) return ElMessage.error('缺少 connection');
     connectionRef.value.addIceCandidate(candidate).then(
-      () => console.log('AddIceCandidate success.'),
-      (err) => console.log('[Failed to add Ice Candidate]: ' + err.toString())
+      () => {
+        // console.log(`AddIceCandidate success. (${JSON.stringify(candidate)})`);
+      },
+      (err) => {
+        ElMessage.error(`[Failed to add Ice Candidate]: ${err.toString()} (${JSON.stringify(candidate)})`);
+      }
     );
   });
   // 交换 description
   socket.value.on('receive_desc', (desc: RTCSessionDescriptionInit) => {
-    console.log('接收到对端的 desc: ', desc)
     if (!desc) return;
     if (!connectionRef.value) return ElMessage.error('缺少 connection');
     connectionRef.value.setRemoteDescription(desc).then(
       () => {
-        console.log('setRemoteDescription success.');
+        // console.log(`setRemoteDescription success. (${JSON.stringify(desc)})`);
         // Answer端 需要接收到 Offer端 的 Description 才能开始创建
         if (role.value === 'answer') createAnswer();
       },
-      (err) => console.log('[Failed to setRemoteDescription]:' + err.toString())
+      (err) => {
+        ElMessage.error(`[Failed to setRemoteDescription]: ${err.toString()} (${JSON.stringify(desc)})`);
+      }
     );
   });
 
@@ -133,7 +138,7 @@ function initPeerConnection() {
   connectionRef.value = connection
   // 得到 [ICE candidate]
   connectionRef.value.onicecandidate = async (evt: RTCPeerConnectionIceEvent) => {
-    console.log('onicecandidate: ', JSON.stringify(evt)) // TODO:del
+    // console.log('onicecandidate: ', JSON.stringify(evt)) // TODO:del
     const { candidate } = evt;
     // // 先存放，因为 addIceCandidate 前必须先执行 setRemoteDescription
     // candidateList.push(candidate);
@@ -151,7 +156,7 @@ async function createOffer() {
     // 创建[发送通道]
     const sendChannel = connectionRef.value.createDataChannel('stun-channel-2');
     channelRef.value = sendChannel;
-    console.log('channel: ', sendChannel)
+    // console.log('channel: ', sendChannel)
     // [发送通道]的事件
     sendChannel.onmessage = onChannelMessage;
     sendChannel.onopen = onChannelStateChange.bind(undefined, sendChannel);
@@ -161,10 +166,7 @@ async function createOffer() {
     connectionRef.value!.setLocalDescription(desc);
     // 通知对端创建[Answer] 发送[Description]
     await asyncSendSocketData({ socket: socket.value as Socket, event: 'send_desc', dataList: [desc] });
-    localDescription.value = desc;
-    offerCreated.value = true;
   } catch (err) {
-    console.error(`[createOffer error]: ${String(err)}`);
     ElMessage.error(`[createOffer error]: ${String(err)}`);
   }
 }
@@ -175,20 +177,15 @@ async function createAnswer() {
       // 获取[发送通道]
       const receiveChannel = event.channel;
       channelRef.value = receiveChannel;
-      console.log('channel: ', receiveChannel)
       // [发送通道]的事件
       receiveChannel.onmessage = onChannelMessage;
       receiveChannel.onopen = onChannelStateChange.bind(undefined, receiveChannel);
       receiveChannel.onclose = onChannelStateChange.bind(undefined, receiveChannel);
     };
     const desc = await connectionRef.value.createAnswer();
-    console.log('[Answer from localConnection]: ', desc, connectionRef.value);
     connectionRef.value!.setLocalDescription(desc);
     await asyncSendSocketData({ socket: socket.value as Socket, event: 'send_desc', dataList: [desc] });
-    localDescription.value = desc;
-    answerCreated.value = true;
   } catch (err) {
-    console.error(`[createAnswer error]: ${String(err)}`);
     ElMessage.error(`[createAnswer error]: ${String(err)}`);
   }
 }
@@ -196,8 +193,9 @@ async function createAnswer() {
 // 发送数据
 function sendChannel() {
   if (!channelRef.value) return ElMessage.error('缺少 channel');
-  if (!channelData.value) return ElMessage.error('缺少发送数据')
-  channelRef.value.send(channelData.value);
+  if (!channelSendData.value) return ElMessage.error('缺少发送数据')
+  channelRef.value.send(channelSendData.value);
+  channelSendData.value = '';
 }
 
 // 事件
@@ -206,7 +204,15 @@ function onChannelMessage(evt: MessageEvent) {
 }
 function onChannelStateChange(channel: RTCDataChannel) {
   const readyState = channel.readyState;
-  console.log(`Channel state is: ${readyState}`);
+  ElMessage.info(`Channel state is: ${readyState}`);
+  if (readyState === 'open') onChannelOpen();
+}
+function onChannelOpen() {
+  channelOpened.value = true;
+  ElMessage.success('数据通道已建立');
+  if (!socket.value) return ElMessage.error(`[程序意外错误] 缺少 socket: onChannelOpen`);
+  socket.value.close();
+  socket.value = null;
 }
 function onSocketAck(data: { msg?: string, success: boolean }) {
   const { success, msg } = data;
@@ -286,7 +292,7 @@ onMounted(initSocket);
     <div>[{{ inRoom ? `已进入 ${roomId} 房间` : '未进入任何房间' }}]</div>
 
     <div>
-      <el-input v-model="channelData" class="!w-200px" />
+      <el-input v-model="channelSendData" class="!w-200px" />
       <el-button @click="sendChannel" :disabled="!inRoom">发送数据</el-button>
     </div>
   </div>
