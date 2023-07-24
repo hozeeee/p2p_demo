@@ -54,18 +54,18 @@ const socket = ref<Socket | null>(null);
 const socketConnected = ref(false);
 const roomId = ref('');
 const inRoom = ref(false);
-const channelSendData = ref('');
-// 初始化 RTCPeerConnection
+// 角色
+const role = ref<'offer' | 'answer' | ''>('');
+// RTCPeerConnection
 const connectionRef = ref<RTCPeerConnection>();
 const channelRef = ref<RTCDataChannel>();
 const channelOpened = ref(false);
 // const candidateList = reactive<(RTCIceCandidate | null)[]>([]); // TODO:成功建立p2p后清空
 // const candidateEnd = ref(false);
 // const candidateTimer = ref<number>();
-// 角色
-const role = ref<'offer' | 'answer' | ''>('');
-//
-// const localDescription = ref<RTCSessionDescriptionInit>();
+// 数据交互
+const channelSendData = ref('');
+const dataList = reactive<{ type: 'self' | 'target', msg: string }[]>([]);
 
 
 // 创建 socket
@@ -156,7 +156,6 @@ async function createOffer() {
     // 创建[发送通道]
     const sendChannel = connectionRef.value.createDataChannel('stun-channel-2');
     channelRef.value = sendChannel;
-    // console.log('channel: ', sendChannel)
     // [发送通道]的事件
     sendChannel.onmessage = onChannelMessage;
     sendChannel.onopen = onChannelStateChange.bind(undefined, sendChannel);
@@ -195,12 +194,14 @@ function sendChannel() {
   if (!channelRef.value) return ElMessage.error('缺少 channel');
   if (!channelSendData.value) return ElMessage.error('缺少发送数据')
   channelRef.value.send(channelSendData.value);
+  dataList.push({ type: 'self', msg: channelSendData.value });
   channelSendData.value = '';
 }
 
 // 事件
 function onChannelMessage(evt: MessageEvent) {
   ElMessage.info(evt.data);
+  dataList.push({ type: 'target', msg: evt.data });
 }
 function onChannelStateChange(channel: RTCDataChannel) {
   const readyState = channel.readyState;
@@ -214,11 +215,6 @@ function onChannelOpen() {
   socket.value.close();
   socket.value = null;
 }
-function onSocketAck(data: { msg?: string, success: boolean }) {
-  const { success, msg } = data;
-  if (!success) return ElMessage.error(msg);
-  inRoom.value = true;
-}
 
 // 工具函数
 function asyncSendSocketData(params: { socket: Socket, event: string, dataList: any[], timeout?: number }) {
@@ -229,8 +225,9 @@ function asyncSendSocketData(params: { socket: Socket, event: string, dataList: 
       socket.off(ackEvent);
       reject(`socket send timeout (${event})`);
     }, timeout || 2000);
-    socket.once(ackEvent, (data) => {
-      onSocketAck(data);
+    socket.once(ackEvent, (data: { msg?: string, success: boolean }) => {
+      const { success, msg } = data;
+      if (!success) return ElMessage.error(msg);
       resolve(data);
     });
     socket.emit(event, ...dataList);
@@ -241,8 +238,8 @@ function asyncSendSocketData(params: { socket: Socket, event: string, dataList: 
 async function intoRoom() {
   if (!socket.value) return ElMessage.error('缺少 socket');
   if (!roomId.value) return ElMessage.error('缺少房间号');
-  const res = await asyncSendSocketData({ socket: socket.value as any, event: 'into_room', dataList: [roomId.value] }) as any;
-  onSocketAck(res);
+  await asyncSendSocketData({ socket: socket.value as any, event: 'into_room', dataList: [roomId.value] }) as any;
+  inRoom.value = true;
 }
 
 
@@ -280,7 +277,7 @@ onMounted(initSocket);
 </script>
 
 <template>
-  <div class="w-full h-full">
+  <div class="w-full h-full flex flex-col">
 
     <div>
       <span>room: </span>
@@ -290,9 +287,16 @@ onMounted(initSocket);
     </div>
 
     <div>[{{ inRoom ? `已进入 ${roomId} 房间` : '未进入任何房间' }}]</div>
+    <div class="flex-1 overflow-auto bg-gray-100">
+      <div v-for="item, idx of dataList" :key="idx" :class="`${item.type === 'self' ? 'text-right' : 'text-left'}`">
+        <span v-if="item.type === 'target'" class="select-none">[对方]</span>
+        <span>{{ item.msg }}</span>
+        <span v-if="item.type === 'self'" class="select-none">[自己]</span>
+      </div>
+    </div>
 
-    <div>
-      <el-input v-model="channelSendData" class="!w-200px" />
+    <div class="w-full flex">
+      <el-input v-model="channelSendData" @keydown.enter="sendChannel" class="!flex-1" />
       <el-button @click="sendChannel" :disabled="!inRoom">发送数据</el-button>
     </div>
   </div>
