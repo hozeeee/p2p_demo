@@ -1,6 +1,6 @@
 {
   "extends": "@vue/tsconfig/tsconfig.dom.json",
-  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "node_modules/element-plus/global.d.ts"],
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "node_modules/element-plus/global.d.ts", "node_modules/@types/*"],
   "exclude": ["src/**/__tests__/*", "node_modules/element-plus/es/index.d.ts"],
   "compilerOptions": {
     "composite": true,
