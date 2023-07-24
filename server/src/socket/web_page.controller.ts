@@ -115,8 +115,11 @@ export class WebPageSocketController {
         success: false,
         msg: '非预期情况，找不到其中一方的 socket',
       };
-    peerOneSocket.emit('create_offer');
+    // peerOneSocket.emit('create_offer');
     // peerTwoSocket.emit('is_answer');
+
+    peerOneSocket.emit('set_role', 'offer');
+    peerTwoSocket.emit('set_role', 'answer');
     return {
       success: true,
     };
@@ -162,7 +165,7 @@ export class WebPageSocketController {
   async sendIceCandidate(...args) {
     const tgSocket = this.findRoomOtherSocket(this.ctx.id);
     if (!tgSocket) return { success: false, msg: '非预期错误' };
-    tgSocket.emit('receive_desc', ...args);
+    tgSocket.emit('add_ice_candidate', ...args);
     return { success: true };
   }
 
